@@ -1,63 +1,112 @@
 import cv2
-import numpy as np
+from ultralytics import YOLO
+import time
 
+# YOLO model and settings
+model_path = "yolov8s.pt"
+target_labels = ["cell phone", "bottle"]  # Labels que você quer detetar
+model = YOLO(model_path)
+
+# OpenCV video capture
 cap = cv2.VideoCapture(0)
-
-# Check if the video capture has been initialized correctly
 if not cap.isOpened():
-    print("Error: Could not open video capture.")
+    print("Erro ao acessar a câmera.")
     exit()
 
-ret, frame = cap.read()
+# Tracker parameters
+trackers = {}  # Dicionário {label: tracker}
+tracker_timeout = {}  # Tempo de inatividade para cada tracker
+timeout_limit = 20  # Frames limite para resetar trackers
+min_area = 1000
+max_area = 100000
 
-if not ret:
-    print("Error: Could not read frame.")
+def get_center(bbox):
+    x1, y1, x2, y2 = bbox
+    center_x = int((x1 + x2) / 2)
+    center_y = int((y1 + y2) / 2)
+    return center_x, center_y
+
+def initialize_trackers(frame):
+    """
+    Reinicializa trackers usando YOLO apenas quando necessário.
+    """
+    global trackers, tracker_timeout
+
+    results = model(frame, conf=0.5, verbose=False)  # Adicione 'conf' para aumentar a precisão
+
+    for result in results:
+        for box in result.boxes:
+            label = result.names[int(box.cls[0])]
+            confidence = box.conf[0].item()
+
+            # Filtra por confiança e classe desejada
+            if label in target_labels and confidence > 0.5:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                area = (x2 - x1) * (y2 - y1)
+
+                # Filtra por tamanho da área
+                if min_area <= area <= max_area and label not in trackers:
+                    tracker = cv2.TrackerCSRT_create()
+                    trackers[label] = tracker
+                    tracker_timeout[label] = 0
+                    tracker.init(frame, (x1, y1, x2 - x1, y2 - y1))
+
+def update_trackers(frame):
+    """
+    Atualiza trackers e desenha as caixas.
+    """
+    global trackers, tracker_timeout
+
+    centers = {}  # Guarda centros dos objetos
+    to_remove = []
+
+    for label, tracker in trackers.items():
+        success, bbox = tracker.update(frame)
+        if success:
+            x, y, w, h = map(int, bbox)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            center_x, center_y = get_center((x, y, x + w, y + h))
+            centers[label] = center_y
+
+            cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
+            cv2.putText(frame, f"{label} (y={center_y})", (x, y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            tracker_timeout[label] = 0  # Reseta timeout
+        else:
+            tracker_timeout[label] += 1
+            if tracker_timeout[label] > timeout_limit:
+                to_remove.append(label)  # Remove trackers fantasmas
+
+    # Remove trackers que perderam os objetos
+    for label in to_remove:
+        trackers.pop(label)
+        tracker_timeout.pop(label)
+
+    return centers
+
+# Main loop
+try:
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        # Inicializa ou reinicializa trackers periodicamente
+        if len(trackers) == 0 or any(v > timeout_limit for v in tracker_timeout.values()):
+            initialize_trackers(frame)
+
+        centers = update_trackers(frame)  # Atualiza os trackers
+
+        # Mostra FPS
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        cv2.putText(frame, f"FPS: {fps}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+        # Exibe o vídeo
+        cv2.imshow("Tracking com YOLO e OpenCV", frame)
+
+        # Pressione "q" para sair
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+finally:
     cap.release()
-    exit()
-
-# setup initial location of window
-x, y, w, h = 150, 200, 250, 250  # simply hardcoded the values
-img2 = cv2.rectangle(frame, (x, y), (x + w, y + h), 255, 2)
-cv2.imshow('inicial', img2)
-cv2.waitKey()
-
-track_window = (x, y, w, h)
-
-roi = frame[y:y + h, x:x + w]
-hsv_roi = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-mask = cv2.inRange(hsv_roi, np.array((0., 60., 32.)), np.array((180., 255., 255.)))
-roi_hist = cv2.calcHist([hsv_roi], [0], mask, [180], [0, 180])
-cv2.normalize(roi_hist, roi_hist, 0, 255, cv2.NORM_MINMAX)
-
-term_crit = (cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 1)
-
-while True:
-    if not cap.isOpened():
-        cap.open(0)
-    ret, frame = cap.read()
-
-    if not ret:
-        print("Error: Could not read frame.")
-        break
-
-    cv2.imshow("Image Faces", frame)
-
-    hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-    dst = cv2.calcBackProject([hsv], [0], roi_hist, [0, 180], 1)
-
-    # apply camshift to get the new location
-    ret, track_window = cv2.CamShift(dst, track_window, term_crit)
-
-    # Draw it on image
-    pts = cv2.boxPoints(ret)
-    pts = np.int0(pts)
-    img2 = cv2.polylines(frame, [pts], True, 255, 2)
-    print("X: " + str(track_window[0]) + " Y: " + str(track_window[1]))
-    cv2.imshow('img2', img2)
-
-    c = cv2.waitKey(1)
-    if c == 27:
-        break
-
-cv2.destroyAllWindows()
-cap.release()
+    cv2.destroyAllWindows()
