@@ -1,24 +1,30 @@
 import cv2
 from ultralytics import YOLO
-import time
+import numpy as np
 
 # YOLO model and settings
-model_path = "yolov8s.pt"
-target_labels = ["cell phone", "bottle"]  # Labels que você quer detetar
+model_path = "yolov8x.pt"
+target_labels = ["cell phone", "bottle"]  # Labels you want to detect
 model = YOLO(model_path)
 
 # OpenCV video capture
 cap = cv2.VideoCapture(0)
 if not cap.isOpened():
-    print("Erro ao acessar a câmera.")
+    print("Error accessing the camera.")
     exit()
 
-# Tracker parameters
-trackers = {}  # Dicionário {label: tracker}
-tracker_timeout = {}  # Tempo de inatividade para cada tracker
-timeout_limit = 20  # Frames limite para resetar trackers
-min_area = 1000
-max_area = 100000
+# Reduce frame size for better performance
+frame_width = 640
+frame_height = 480
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, frame_width)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, frame_height)
+
+# Parameters for Lucas-Kanade optical flow
+lk_params = dict(winSize=(15, 15), maxLevel=2, criteria=(cv2.TERM_CRITERIA_EPS | cv2.TERM_CRITERIA_COUNT, 10, 0.03))
+
+# Initialize variables
+prev_gray = None
+tracked_objects = {}
 
 def get_center(bbox):
     x1, y1, x2, y2 = bbox
@@ -26,63 +32,57 @@ def get_center(bbox):
     center_y = int((y1 + y2) / 2)
     return center_x, center_y
 
-def initialize_trackers(frame):
-    """
-    Reinicializa trackers usando YOLO apenas quando necessário.
-    """
-    global trackers, tracker_timeout
+def detect_and_track(frame):
+    global prev_gray, tracked_objects
 
-    results = model(frame, conf=0.5, verbose=False)  # Adicione 'conf' para aumentar a precisão
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+
+    results = model(frame, conf=0.7, verbose=False)  # Increase confidence threshold
+    detections = []
 
     for result in results:
         for box in result.boxes:
             label = result.names[int(box.cls[0])]
             confidence = box.conf[0].item()
 
-            # Filtra por confiança e classe desejada
-            if label in target_labels and confidence > 0.5:
+            # Filter by confidence and desired class
+            if label in target_labels and confidence > 0.7:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
-                area = (x2 - x1) * (y2 - y1)
+                center_x, center_y = get_center((x1, y1, x2, y2))
+                detections.append((center_x, center_y, label))
+                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
 
-                # Filtra por tamanho da área
-                if min_area <= area <= max_area and label not in trackers:
-                    tracker = cv2.TrackerCSRT_create()
-                    trackers[label] = tracker
-                    tracker_timeout[label] = 0
-                    tracker.init(frame, (x1, y1, x2 - x1, y2 - y1))
+    if prev_gray is None:
+        prev_gray = gray
+        for (center_x, center_y, label) in detections:
+            tracked_objects[label] = (center_x, center_y)
+    else:
+        if tracked_objects:
+            for label, point in tracked_objects.items():
+                prev_points = np.array([point], dtype=np.float32).reshape(-1, 1, 2)
+                next_points, status, _ = cv2.calcOpticalFlowPyrLK(prev_gray, gray, prev_points, None, **lk_params)
+                good_new = next_points[status == 1]
+                good_old = prev_points[status == 1]
 
-def update_trackers(frame):
-    """
-    Atualiza trackers e desenha as caixas.
-    """
-    global trackers, tracker_timeout
+                if len(good_new) > 0:
+                    new = good_new[0]
+                    old = good_old[0]
+                    a, b = new.ravel()
+                    c, d = old.ravel()
+                    a, b = int(a), int(b)
+                    c, d = int(c), int(d)
+                    tracked_objects[label] = (a, b)
+                    cv2.circle(frame, (a, b), 5, (0, 255, 0), -1)
+                    cv2.line(frame, (a, b), (c, d), (0, 255, 0), 2)
 
-    centers = {}  # Guarda centros dos objetos
-    to_remove = []
+                    # Print the y-coordinate of the optical flow
+                    print(f"Optical flow y-coordinate for {label}: {b}")
 
-    for label, tracker in trackers.items():
-        success, bbox = tracker.update(frame)
-        if success:
-            x, y, w, h = map(int, bbox)
-            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
-            center_x, center_y = get_center((x, y, x + w, y + h))
-            centers[label] = center_y
+        for (center_x, center_y, label) in detections:
+            tracked_objects[label] = (center_x, center_y)
 
-            cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
-            cv2.putText(frame, f"{label} (y={center_y})", (x, y - 10),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            tracker_timeout[label] = 0  # Reseta timeout
-        else:
-            tracker_timeout[label] += 1
-            if tracker_timeout[label] > timeout_limit:
-                to_remove.append(label)  # Remove trackers fantasmas
-
-    # Remove trackers que perderam os objetos
-    for label in to_remove:
-        trackers.pop(label)
-        tracker_timeout.pop(label)
-
-    return centers
+        prev_gray = gray.copy()
 
 # Main loop
 try:
@@ -91,20 +91,16 @@ try:
         if not ret:
             break
 
-        # Inicializa ou reinicializa trackers periodicamente
-        if len(trackers) == 0 or any(v > timeout_limit for v in tracker_timeout.values()):
-            initialize_trackers(frame)
+        detect_and_track(frame)  # Detect and track objects
 
-        centers = update_trackers(frame)  # Atualiza os trackers
-
-        # Mostra FPS
+        # Show FPS
         fps = int(cap.get(cv2.CAP_PROP_FPS))
-        cv2.putText(frame, f"FPS: {fps}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+        cv2.putText(frame, f"FPS: {fps}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
 
-        # Exibe o vídeo
-        cv2.imshow("Tracking com YOLO e OpenCV", frame)
+        # Display the video
+        cv2.imshow("Tracking with YOLO and Optical Flow", frame)
 
-        # Pressione "q" para sair
+        # Press "q" to exit
         if cv2.waitKey(1) & 0xFF == ord("q"):
             break
 finally:
