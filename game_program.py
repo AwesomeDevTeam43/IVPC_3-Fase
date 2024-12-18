@@ -1,8 +1,10 @@
 import pygame
 from pygame.locals import *
 from sys import exit
+import cv2
+import numpy as np
+from movement_detection import detect_and_track, get_frame
 
-#
 pygame.init()
 # Set up the display window
 screen = pygame.display.set_mode((640, 480), 0, 32)
@@ -36,65 +38,96 @@ bar1_score, bar2_score = 0, 0  # Player scores
 clock = pygame.time.Clock()
 font = pygame.font.SysFont("calibri", 40)
 
-# Main game loop
+# Global variables for paddle control
+paddle_speed = 5
 
-while True:
-    # Handle events
-    for event in pygame.event.get():
-        if event.type == QUIT:
-            exit()
+def update_paddle_positions(centers):
+    global bar1_y, bar2_y
+    if centers is None:
+        return
+    if "cell phone" in centers:
+        bar1_y = centers["cell phone"] - 25  # Center the paddle on the detected object
+    if "bottle" in centers:
+        bar2_y = centers["bottle"] - 25  # Center the paddle on the detected object
 
-    # Render the current scores
-    score1 = font.render(str(bar1_score), True, (255, 255, 255))
-    score2 = font.render(str(bar2_score), True, (255, 255, 255))
+try:
+    # Main game loop
+    while True:
+        # Handle events
+        for event in pygame.event.get():
+            if event.type == QUIT:
+                exit()
 
-    # Draw the background, paddles, ball, and scores
-    screen.blit(background, (0, 0))  # Clear the screen
-    pygame.draw.rect(screen, (255, 255, 255), (5, 5, 630, 470), 2)  # Draw border
-    pygame.draw.aaline(screen, (255, 255, 255), (330, 5), (330, 475))  # Center line
-    screen.blit(bar1, (bar1_x, bar1_y))  # Draw Player 1's paddle
-    screen.blit(bar2, (bar2_x, bar2_y))  # Draw Player 2's paddle
-    screen.blit(circle, (circle_x, circle_y))  # Draw the ball
-    screen.blit(score1, (250., 210.))  # Display Player 1's score
-    screen.blit(score2, (380., 210.))  # Display Player 2's score
+        # Get the current frame from the camera
+        frame = get_frame()
+        if frame is not None:
+            centers = detect_and_track(frame)  # Detect and track objects
+            update_paddle_positions(centers)  # Update paddle positions based on detection
 
-    # Update ball position based on its speed
-    time_passed = clock.tick(30)  # Cap the frame rate to 30 FPS
-    time_sec = time_passed / 1000.0  # Convert milliseconds to seconds
+        # Debug: Show the camera feed
+        cv2.imshow("Camera View", frame)
 
-    circle_x += speed_x * time_sec
-    circle_y += speed_y * time_sec
+        # Close OpenCV window if 'q' is pressed
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
 
-    # Collision detection with paddles
-    if circle_x <= bar1_x + 10.:
-        if bar1_y - 7.5 <= circle_y <= bar1_y + 42.5:
-            circle_x = 20.
-            speed_x = -speed_x  # Reverse X direction
+        # Render the current scores
+        score1 = font.render(str(bar1_score), True, (255, 255, 255))
+        score2 = font.render(str(bar2_score), True, (255, 255, 255))
 
-    if circle_x >= bar2_x - 15.:
-        if bar2_y - 7.5 <= circle_y <= bar2_y + 42.5:
-            circle_x = 605.
-            speed_x = -speed_x  # Reverse X direction
+        # Draw the background, paddles, ball, and scores
+        screen.blit(background, (0, 0))  # Clear the screen
+        pygame.draw.rect(screen, (255, 255, 255), (5, 5, 630, 470), 2)  # Draw border
+        pygame.draw.aaline(screen, (255, 255, 255), (330, 5), (330, 475))  # Center line
+        screen.blit(bar1, (bar1_x, bar1_y))  # Draw Player 1's paddle
+        screen.blit(bar2, (bar2_x, bar2_y))  # Draw Player 2's paddle
+        screen.blit(circle, (circle_x, circle_y))  # Draw the ball
+        screen.blit(score1, (250., 210.))  # Display Player 1's score
+        screen.blit(score2, (380., 210.))  # Display Player 2's score
 
-    # Ball goes out of bounds, update the score
-    if circle_x < 5.:
-        bar2_score += 1
-        circle_x, circle_y = 320., 232.5  # Reset ball position
-        bar1_y, bar2_y = 215., 215.  # Reset paddles
+        # Update ball position based on its speed
+        time_passed = clock.tick(30)  # Cap the frame rate to 30 FPS
+        time_sec = time_passed / 1000.0  # Convert milliseconds to seconds
 
-    elif circle_x > 620.:
-        bar1_score += 1
-        circle_x, circle_y = 307.5, 232.5  # Reset ball position
-        bar1_y, bar2_y = 215., 215.  # Reset paddles
+        circle_x += speed_x * time_sec
+        circle_y += speed_y * time_sec
 
-    # Ball collision with top and bottom of the screen
-    if circle_y <= 10.:
-        speed_y = -speed_y  # Reverse Y direction
-        circle_y = 10.
+        # Collision detection with paddles
+        if circle_x <= bar1_x + 10.:
+            if bar1_y - 7.5 <= circle_y <= bar1_y + 42.5:
+                circle_x = 20.
+                speed_x = -speed_x  # Reverse X direction
 
-    elif circle_y >= 457.5:
-        speed_y = -speed_y  # Reverse Y direction
-        circle_y = 457.5
+        if circle_x >= bar2_x - 15.:
+            if bar2_y - 7.5 <= circle_y <= bar2_y + 42.5:
+                circle_x = 605.
+                speed_x = -speed_x  # Reverse X direction
 
-    pygame.display.update()
-    # Update the display with new drawings
+        # Ball goes out of bounds, update the score
+        if circle_x < 5.:
+            bar2_score += 1
+            circle_x, circle_y = 320., 232.5  # Reset ball position
+            bar1_y, bar2_y = 215., 215.  # Reset paddles
+
+        elif circle_x > 620.:
+            bar1_score += 1
+            circle_x, circle_y = 307.5, 232.5  # Reset ball position
+            bar1_y, bar2_y = 215., 215.  # Reset paddles
+
+        # Ball collision with top and bottom of the screen
+        if circle_y <= 10.:
+            speed_y = -speed_y  # Reverse Y direction
+            circle_y = 10.
+
+        elif circle_y >= 457.5:
+            speed_y = -speed_y  # Reverse Y direction
+            circle_y = 457.5
+
+        pygame.display.update()
+        # Update the display with new drawings
+
+except KeyboardInterrupt:
+    print("Program interrupted by user.")
+finally:
+    pygame.quit()
+    cv2.destroyAllWindows()

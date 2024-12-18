@@ -3,7 +3,7 @@ from ultralytics import YOLO
 import numpy as np
 
 # YOLO model and settings
-model_path = "yolov8x.pt"
+model_path = "yolov8l.pt"
 target_labels = ["cell phone", "bottle"]  # Labels you want to detect
 model = YOLO(model_path)
 
@@ -32,8 +32,11 @@ def get_center(bbox):
     center_y = int((y1 + y2) / 2)
     return center_x, center_y
 
+
 def detect_and_track(frame):
     global prev_gray, tracked_objects
+
+    centers = {}
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
@@ -52,6 +55,7 @@ def detect_and_track(frame):
                 detections.append((center_x, center_y, label))
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
                 cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
+                centers[label] = center_y
 
     if prev_gray is None:
         prev_gray = gray
@@ -78,31 +82,17 @@ def detect_and_track(frame):
 
                     # Print the y-coordinate of the optical flow
                     print(f"Optical flow y-coordinate for {label}: {b}")
+                    centers[label] = b
 
         for (center_x, center_y, label) in detections:
             tracked_objects[label] = (center_x, center_y)
 
         prev_gray = gray.copy()
 
-# Main loop
-try:
-    while True:
-        ret, frame = cap.read()
-        if not ret:
-            break
+    return centers
 
-        detect_and_track(frame)  # Detect and track objects
-
-        # Show FPS
-        fps = int(cap.get(cv2.CAP_PROP_FPS))
-        cv2.putText(frame, f"FPS: {fps}", (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
-
-        # Display the video
-        cv2.imshow("Tracking with YOLO and Optical Flow", frame)
-
-        # Press "q" to exit
-        if cv2.waitKey(1) & 0xFF == ord("q"):
-            break
-finally:
-    cap.release()
-    cv2.destroyAllWindows()
+def get_frame():
+    ret, frame = cap.read()
+    if not ret:
+        return None
+    return frame

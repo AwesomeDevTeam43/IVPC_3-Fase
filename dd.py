@@ -1,77 +1,116 @@
 import cv2
-# pip install opencv-contrib-python
-import argparse
-import os
+from ultralytics import YOLO
+import time
 
-parser = argparse.ArgumentParser()
-# parser.add_argument('--input', type=str, help='Path to a video or a sequence of image.',
-#                     default=os.path.join('Files', 'slow_traffic_small.mp4'))
-parser.add_argument('--input', type=str, help='Path to a video or a sequence of image.',
-                    default=os.path.join('Files', 'vtest.avi'))
-args = parser.parse_args()
+# YOLO model and settings
+model_path = "yolov8s.pt"
+target_labels = ["cell phone", "bottle"]  # Labels que você quer detectar
+model = YOLO(model_path)
 
-cap = cv2.VideoCapture(args.input)
+# OpenCV video capture
+cap = cv2.VideoCapture(0)
+if not cap.isOpened():
+    print("Erro ao acessar a câmera.")
+    exit()
 
-tracker_types = ['KCF', 'CSRT']
-tracker_type = tracker_types[1]
+# Tracker parameters
+trackers = {}  # Dicionário {label: tracker}
+tracker_timeout = {}  # Tempo de inatividade para cada tracker
+timeout_limit = 20  # Frames limite para resetar trackers
+min_area = 1000
+max_area = 100000
+frame_skip = 10
+frame_count = 0
 
-if tracker_type == 'KCF':
-    tracker = cv2.TrackerKCF_create()
-if tracker_type == "CSRT":
-    tracker = cv2.TrackerCSRT_create()
+def get_center(bbox):
+    x1, y1, x2, y2 = bbox
+    center_x = int((x1 + x2) / 2)
+    center_y = int((y1 + y2) / 2)
+    return center_x, center_y
 
-# Read first frame.
-ret, frame = cap.read()
+def initialize_trackers(frame):
+    """
+    Reinicializa trackers usando YOLO apenas quando necessário.
+    """
+    global trackers, tracker_timeout
 
-# Define an initial bounding box
-x, y, w, h = 250, 220, 45, 90  # simply hardcoded the values for traffic
-# x, y, w, h = 495, 156, 45, 80  # simply hardcoded the values for pedestrians vtest
-bbox = (x, y, w, h)
-img2 = cv2.rectangle(frame, (x, y), (x + w, y + h), 255, 2)
-cv2.imshow('inicial', img2)
-cv2.waitKey()
+    results = model(frame, conf=0.5, verbose=False)  # Adicione 'conf' para aumentar a precisão
 
-# Uncomment the line below to select a different bounding box
-# bbox = cv2.selectROI(frame, False)
+    for result in results:
+        for box in result.boxes:
+            label = result.names[int(box.cls[0])]
+            confidence = box.conf[0].item()
 
-# Initialize tracker with first frame and bounding box
-ret = tracker.init(frame, bbox)
+            # Filtra por confiança e classe desejada
+            if label in target_labels and confidence > 0.5:
+                x1, y1, x2, y2 = map(int, box.xyxy[0])
+                area = (x2 - x1) * (y2 - y1)
 
-while True:
-    # Read a new frame
-    ret, frame = cap.read()
-    if not ret:
-        break
+                # Filtra por tamanho da área
+                if min_area <= area <= max_area:
+                    tracker = cv2.TrackerCSRT_create()
+                    trackers[label] = tracker
+                    tracker_timeout[label] = 0
+                    tracker.init(frame, (x1, y1, x2 - x1, y2 - y1))
 
-    # Start timer
-    timer = cv2.getTickCount()
+def update_trackers(frame):
+    """
+    Atualiza trackers e desenha as caixas.
+    """
+    global trackers, tracker_timeout
 
-    # Update tracker
-    ok, bbox = tracker.update(frame)
+    centers = {}  # Guarda centros dos objetos
+    to_remove = []
 
-    # Calculate Frames per second (FPS)
-    fps = cv2.getTickFrequency() / (cv2.getTickCount() - timer)
+    for label, tracker in trackers.items():
+        success, bbox = tracker.update(frame)
+        if success:
+            x, y, w, h = map(int, bbox)
+            cv2.rectangle(frame, (x, y), (x + w, y + h), (0, 255, 0), 2)
+            center_x, center_y = get_center((x, y, x + w, y + h))
+            centers[label] = center_y
 
-    # Draw bounding box
-    if ok:
-        # Tracking success
-        p1 = (int(bbox[0]), int(bbox[1]))
-        p2 = (int(bbox[0] + bbox[2]), int(bbox[1] + bbox[3]))
-        cv2.rectangle(frame, p1, p2, (255, 0, 0), 2, 1)
-    else:
-        # Tracking failure
-        cv2.putText(frame, "Tracking failure detected", (100, 80), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 0, 255), 2)
+            cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
+            cv2.putText(frame, f"{label} (y={center_y})", (x, y - 10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            tracker_timeout[label] = 0  # Reseta timeout
+        else:
+            tracker_timeout[label] += 1
+            if tracker_timeout[label] > timeout_limit:
+                to_remove.append(label)  # Remove trackers fantasmas
 
-    # Display tracker type on frame
-    cv2.putText(frame, tracker_type + " Tracker", (100, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (50, 170, 50), 2);
+    # Remove trackers que perderam os objetos
+    for label in to_remove:
+        trackers.pop(label)
+        tracker_timeout.pop(label)
 
-    # Display FPS on frame
-    cv2.putText(frame, "FPS : " + str(int(fps)), (100, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (50, 170, 50), 2);
+    return centers
 
-    # Display result
-    cv2.imshow("Tracking", frame)
+# Main loop
+try:
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
 
-    # Exit if ESC pressed
-    k = cv2.waitKey(30) & 0xff
-    if k == 27:
-        break
+        frame_count += 1
+
+        # YOLO detection a cada 'frame_skip' frames
+        if frame_count % frame_skip == 0 or len(trackers) == 0:
+            initialize_trackers(frame)
+
+        centers = update_trackers(frame)  # Atualiza os trackers
+
+        # Mostra FPS
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+        cv2.putText(frame, f"FPS: {fps}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (255, 255, 255), 2)
+
+        # Exibe o vídeo
+        cv2.imshow("Tracking com YOLO e OpenCV", frame)
+
+        # Pressione "q" para sair
+        if cv2.waitKey(1) & 0xFF == ord("q"):
+            break
+finally:
+    cap.release()
+    cv2.destroyAllWindows()
