@@ -50,8 +50,8 @@ def update_paddle_positions(centers):
     if "bottle" in centers:
         bar2_y = centers["bottle"] - 25  # Center the paddle on the detected object
 
-    bar1_y = max(0, min(bar1_y, 480 - 50))
-    bar2_y = max(0, min(bar2_y, 480 - 50))
+    bar1_y = max(5, min(bar1_y, 475 - 50))
+    bar2_y = max(5, min(bar2_y, 475 - 50))
 
 try:
     # Main game loop
@@ -68,7 +68,7 @@ try:
             update_paddle_positions(centers)  # Update paddle positions based on detection
 
         # Debug: Show the camera feed
-        cv2.imshow("Camera View", combined_frame)
+        cv2.imshow("Combined", combined_frame)
         cv2.imshow("YOLO Detection", yolo_frame)
         cv2.imshow("Optical Flow", optical_flow_frame)
 
