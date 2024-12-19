@@ -50,6 +50,9 @@ def update_paddle_positions(centers):
     if "bottle" in centers:
         bar2_y = centers["bottle"] - 25  # Center the paddle on the detected object
 
+    bar1_y = max(0, min(bar1_y, 480 - 50))
+    bar2_y = max(0, min(bar2_y, 480 - 50))
+
 try:
     # Main game loop
     while True:
