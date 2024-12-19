@@ -69,6 +69,7 @@ def detect_and_track(frame):
             tracked_objects[label] = (center_x, center_y)
     else:
         if tracked_objects:
+            y_offset = 30  # Initial y offset for the text
             for label, point in tracked_objects.items():
                 prev_points = np.array([point], dtype=np.float32).reshape(-1, 1, 2)
                 next_points, status, _ = cv2.calcOpticalFlowPyrLK(prev_gray, gray, prev_points, None, **lk_params)
@@ -91,7 +92,8 @@ def detect_and_track(frame):
                     centers[label] = b
 
                     # Add y-coordinate text in the corner of the optical flow frame
-                    cv2.putText(optical_flow_frame, f"y: {b}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    cv2.putText(optical_flow_frame, f"y: {b}", (10, y_offset), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
+                    y_offset += 30  # Increment y offset for the next text
 
         for (center_x, center_y, label) in detections:
             tracked_objects[label] = (center_x, center_y)
