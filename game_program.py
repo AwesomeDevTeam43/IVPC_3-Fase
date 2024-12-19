@@ -61,11 +61,13 @@ try:
         # Get the current frame from the camera
         frame = get_frame()
         if frame is not None:
-            centers = detect_and_track(frame)  # Detect and track objects
+            centers, yolo_frame, optical_flow_frame, combined_frame = detect_and_track(frame)  # Detect and track objects
             update_paddle_positions(centers)  # Update paddle positions based on detection
 
         # Debug: Show the camera feed
-        cv2.imshow("Camera View", frame)
+        cv2.imshow("Camera View", combined_frame)
+        cv2.imshow("YOLO Detection", yolo_frame)
+        cv2.imshow("Optical Flow", optical_flow_frame)
 
         # Close OpenCV window if 'q' is pressed
         if cv2.waitKey(1) & 0xFF == ord('q'):

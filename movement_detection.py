@@ -37,6 +37,9 @@ def detect_and_track(frame):
     global prev_gray, tracked_objects
 
     centers = {}
+    yolo_frame = frame.copy()
+    optical_flow_frame = frame.copy()
+    combined_frame = frame.copy()
 
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
@@ -53,9 +56,12 @@ def detect_and_track(frame):
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
                 center_x, center_y = get_center((x1, y1, x2, y2))
                 detections.append((center_x, center_y, label))
-                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
-                cv2.circle(frame, (center_x, center_y), 5, (0, 0, 255), -1)
+                cv2.rectangle(yolo_frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+                cv2.circle(yolo_frame, (center_x, center_y), 5, (0, 0, 255), -1)
                 centers[label] = center_y
+
+                # Add y-coordinate text above the bounding box
+                cv2.putText(yolo_frame, f"y: {center_y}", (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
 
     if prev_gray is None:
         prev_gray = gray
@@ -77,19 +83,25 @@ def detect_and_track(frame):
                     a, b = int(a), int(b)
                     c, d = int(c), int(d)
                     tracked_objects[label] = (a, b)
-                    cv2.circle(frame, (a, b), 5, (0, 255, 0), -1)
-                    cv2.line(frame, (a, b), (c, d), (0, 255, 0), 2)
+                    cv2.circle(optical_flow_frame, (a, b), 5, (0, 255, 0), -1)
+                    cv2.line(optical_flow_frame, (a, b), (c, d), (0, 255, 0), 2)
 
                     # Print the y-coordinate of the optical flow
                     print(f"Optical flow y-coordinate for {label}: {b}")
                     centers[label] = b
+
+                    # Add y-coordinate text in the corner of the optical flow frame
+                    cv2.putText(optical_flow_frame, f"y: {b}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2)
 
         for (center_x, center_y, label) in detections:
             tracked_objects[label] = (center_x, center_y)
 
         prev_gray = gray.copy()
 
-    return centers
+    # Combine YOLO and Optical Flow results in the combined frame
+    combined_frame = cv2.addWeighted(yolo_frame, 0.5, optical_flow_frame, 0.5, 0)
+
+    return centers, yolo_frame, optical_flow_frame, combined_frame
 
 def get_frame():
     ret, frame = cap.read()
