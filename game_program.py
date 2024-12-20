@@ -46,12 +46,12 @@ def update_paddle_positions(centers):
     if centers is None:
         return
     if "cell phone" in centers:
-        bar1_y = centers["cell phone"] - 25  # Center the paddle on the detected object
+        bar1_y = centers["cell phone"] - 25
     if "bottle" in centers:
-        bar2_y = centers["bottle"] - 25  # Center the paddle on the detected object
+        bar2_y = centers["bottle"] - 25
 
-    bar1_y = max(0, min(bar1_y, 480 - 50))
-    bar2_y = max(0, min(bar2_y, 480 - 50))
+    bar1_y = max(5, min(bar1_y, 475  - 50))
+    bar2_y = max(5, min(bar2_y, 475  - 50))
 
 try:
     while True:
@@ -64,7 +64,7 @@ try:
             centers, yolo_frame, optical_flow_frame, combined_frame = detect_and_track(frame)  # Detect and track objects
             update_paddle_positions(centers)  # Update paddle positions based on detection
 
-        cv2.imshow("Camera View", combined_frame)
+        cv2.imshow("Combined Frame", combined_frame)
         cv2.imshow("YOLO Detection", yolo_frame)
         cv2.imshow("Optical Flow", optical_flow_frame)
 
